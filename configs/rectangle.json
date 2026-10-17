@@ -1,0 +1,18 @@
+{
+  "case": "rectangle_sine",
+  "geometry": {
+    "Lx": 1.5,
+    "Ly": 1.0
+  },
+  "boundary_conditions": {
+    "V0": 1.0
+  },
+  "grid": {
+    "h": 0.05
+  },
+  "solver": {
+    "method": "jacobi",
+    "tol": 1e-8,
+    "Nmax": 100000
+  }
+}
