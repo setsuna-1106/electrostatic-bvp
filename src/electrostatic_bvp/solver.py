@@ -22,9 +22,12 @@ class RectangleResult:
     y: FloatArray
     potential: FloatArray
     analytic_potential: FloatArray
+    electric_field_x: FloatArray
+    electric_field_y: FloatArray
     converged: bool
     iterations: int
     final_change: float
+    max_abs_residual: float
     max_abs_error: float
     rmse: float
 
@@ -41,9 +44,27 @@ def analytic_rectangle_sine(
 
     The returned array has shape ``(len(y), len(x))``.
     """
-    x_factor = np.sin(np.pi * x / lx)
-    y_factor = np.sinh(np.pi * y / lx) / np.sinh(np.pi * ly / lx)
+    x_factor = np.sin(np.pi * (x / lx))
+    # Equivalent to sinh(pi*y/lx) / sinh(pi*ly/lx), without overflowing
+    # for tall rectangles. expm1 also avoids cancellation for small arguments.
+    y_factor = (
+        np.exp(np.pi * ((y - ly) / lx))
+        * np.expm1(-2.0 * np.pi * (y / lx))
+        / np.expm1(-2.0 * np.pi * (ly / lx))
+    )
     return v0 * np.outer(y_factor, x_factor)
+
+
+def electric_field(
+    potential: FloatArray, *, dx: float, dy: float
+) -> tuple[FloatArray, FloatArray]:
+    """Return (Ex, Ey) = -grad(phi) on a (y, x) grid.
+
+    Use centered second-order differences inside and second-order one-sided
+    differences at the edges. Each axis must contain at least three nodes.
+    """
+    derivative_y, derivative_x = np.gradient(potential, dy, dx, edge_order=2)
+    return -derivative_x, -derivative_y
 
 
 def solve_rectangle_sine(config: dict[str, Any]) -> RectangleResult:
@@ -75,12 +96,16 @@ def solve_rectangle_sine(config: dict[str, Any]) -> RectangleResult:
 
     converged = False
     final_change = float("inf")
+    weight_x = 1.0 / (2.0 * (1.0 + (dx / dy) ** 2))
+    weight_y = 0.5 - weight_x
     for iteration in range(1, nmax + 1):
         updated = potential.copy()
         updated[1:-1, 1:-1] = (
-            dy**2 * (potential[1:-1, :-2] + potential[1:-1, 2:])
-            + dx**2 * (potential[:-2, 1:-1] + potential[2:, 1:-1])
-        ) / (2.0 * (dx**2 + dy**2))
+            weight_x * potential[1:-1, :-2]
+            + weight_x * potential[1:-1, 2:]
+            + weight_y * potential[:-2, 1:-1]
+            + weight_y * potential[2:, 1:-1]
+        )
 
         final_change = float(
             np.max(np.abs(updated[1:-1, 1:-1] - potential[1:-1, 1:-1]))
@@ -95,6 +120,13 @@ def solve_rectangle_sine(config: dict[str, Any]) -> RectangleResult:
     analytic[:, 0] = 0.0
     analytic[:, -1] = 0.0
 
+    field_x, field_y = electric_field(potential, dx=dx, dy=dy)
+    residual = (
+        (potential[1:-1, :-2] - 2.0 * potential[1:-1, 1:-1]
+         + potential[1:-1, 2:]) / dx**2
+        + (potential[:-2, 1:-1] - 2.0 * potential[1:-1, 1:-1]
+           + potential[2:, 1:-1]) / dy**2
+    )
     interior_error = potential[1:-1, 1:-1] - analytic[1:-1, 1:-1]
     max_abs_error = float(np.max(np.abs(interior_error)))
     rmse = float(np.sqrt(np.mean(interior_error**2)))
@@ -104,9 +136,12 @@ def solve_rectangle_sine(config: dict[str, Any]) -> RectangleResult:
         y=y,
         potential=potential,
         analytic_potential=analytic,
+        electric_field_x=field_x,
+        electric_field_y=field_y,
         converged=converged,
         iterations=iteration,
         final_change=final_change,
+        max_abs_residual=float(np.max(np.abs(residual))),
         max_abs_error=max_abs_error,
         rmse=rmse,
     )
