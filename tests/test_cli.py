@@ -102,6 +102,34 @@ class CliTests(unittest.TestCase):
             self.assertEqual(run.returncode, 2)
             self.assertFalse(bad.exists())
 
+    def test_parallel_plate_cli_potential_and_stop_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            config = load_config(ROOT / "configs/parallel_plate.json")
+            config["geometry"] = {"plate_length": 0.4, "gap": 0.4,
+                                  "domain_half_width": 0.6, "domain_half_height": 0.6}
+            for nmax, expected_code in ((1, 1), (10000, 0)):
+                config["solver"]["Nmax"] = nmax
+                save_config(config, path / "plate.json")
+                output = path / f"output-{nmax}"
+                run = self.run_command("-m", "electrostatic_bvp.main", "--config", path / "plate.json",
+                                       "--output-dir", output)
+                self.assertEqual(run.returncode, expected_code, run.stderr)
+                summary = json.loads((output / "summary.json").read_text())
+                self.assertEqual(summary["config"], config)
+                self.assertEqual(summary["solver"]["converged"], expected_code == 0)
+                self.assertEqual(summary["solver"]["diagnostic_region"], "free_grid_nodes_only")
+                self.assertFalse(summary["electric_field"]["available"])
+                with np.load(output / "solution.npz", allow_pickle=False) as arrays:
+                    self.assertEqual(set(arrays.files), {"x", "y", "potential", "fixed_mask",
+                                                        "positive_plate_mask", "negative_plate_mask"})
+                    u = arrays["potential"]
+                    self.assertTrue(np.isfinite(u).all())
+                    np.testing.assert_array_equal(u[arrays["positive_plate_mask"]], 0.5)
+                    np.testing.assert_array_equal(u[arrays["negative_plate_mask"]], -0.5)
+                    self.assertEqual(summary["grid"]["free_node_count"],
+                                     np.count_nonzero(~arrays["fixed_mask"]))
+
 
 if __name__ == "__main__":
     unittest.main()

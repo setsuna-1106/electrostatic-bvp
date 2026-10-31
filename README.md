@@ -10,7 +10,8 @@
 ```text
 .
 ├── configs/
-│   └── rectangle.json
+│   ├── rectangle.json
+│   └── parallel_plate.json
 ├── docs/
 │   ├── CHANGELOG.md
 │   ├── ROADMAP.md
@@ -21,6 +22,7 @@
 │   └── validate_m1.py
 ├── src/electrostatic_bvp/
 │   ├── config.py
+│   ├── cases.py
 │   ├── solver.py
 │   └── main.py
 ├── tests/               # 测试与数值验证
@@ -35,16 +37,17 @@
 - **基础迭代：** Jacobi 迭代，设置停止阈值 `tol` 和最大迭代次数 `Nmax`。
 - **解析对照：** 矩形正弦边界算例提供解析解，并记录内部节点的最大绝对误差和 RMSE。
 - **电场：** 由电势计算 \(\mathbf{E}=-\nabla\varphi\)，内部用二阶中心差分，边界用二阶单边差分。
-- **当前输出：** `solution.npz` 保存网格、电势、解析解、绝对误差与电场分量；`summary.json` 保存配置、网格、收敛状态、离散 Laplace 残差及误差指标。
+- **矩形输出：** `solution.npz` 保存网格、电势、解析解、绝对误差与电场分量；`summary.json` 保存配置、网格、收敛状态、离散 Laplace 残差及误差指标。
+- **平行板当前能力：** 有限长零厚度极板和零电势外框的电势求解；内部极板及外框节点固定，收敛变化量与残差仅统计自由节点。电场与绘图尚未实现。
 - **运行依赖：** Python 3.11 及以上、NumPy；测试使用标准库 `unittest`。
 
 详细阶段见[开发路线图](docs/ROADMAP.md)。
 
 ## 项目状态
 
-**当前版本：** v0.2.0 — M1 MVP，矩形区域求解与解析验证已完成。
+**当前版本：** v0.2.0 之后的开发版：M1 MVP 已完成；M2 的 S1 几何输入和 S2 电势求解已完成，M2 整体验收尚未完成。
 
-已核验固定边界、Jacobi 更新与停止条件、解析误差、电场方向、网格加密趋势及真实命令行输出。详细方法和复现命令见[数值验收说明](docs/VALIDATION.md)。平行板电容器、绘图、计算域敏感性和 COMSOL 对照仍按路线图推进。
+已核验矩形算例的固定边界、Jacobi 更新与停止条件、解析误差、电场方向和网格加密趋势，以及平行板的内部约束与自由节点残差。详细方法和复现命令见[数值验收说明](docs/VALIDATION.md)。平行板电场、绘图、计算域敏感性和 COMSOL 对照仍按路线图推进。
 
 从项目根目录安装锁定依赖并运行默认算例：
 
@@ -71,7 +74,20 @@ PYTHONPATH=src uv run --locked python scripts/format_input.py \
 
 将生成路径传给主程序的 `--config` 即可计算。`h` 必须将两个边长分成至少两个整数区间；`tol` 是相邻迭代间内部电势最大变化量的绝对阈值，不等同于解析误差。
 
-所有二维数组按 `(y, x)` 排列，`x` 和 `y` 是一维坐标。NPZ 包含 `x`、`y`、`potential`、`analytic_potential`、`absolute_error`、`electric_field_x`、`electric_field_y`，可以用 `numpy.load(..., allow_pickle=False)` 读取。长度与电压采用一致单位；若输入为米和伏特，电场为伏特/米。误差指标只统计内部节点，离散残差为内部节点上 \(|\nabla_h^2\varphi|\) 的最大值。
+平行板电势的起步算例与配置生成：
+
+```bash
+PYTHONPATH=src uv run --locked python scripts/format_input.py \
+  --case parallel_plate --output results/parallel-plate-config.json
+PYTHONPATH=src uv run --locked python -m electrostatic_bvp.main \
+  --config results/parallel-plate-config.json --output-dir results/parallel_plate
+```
+
+默认板长 `L=4`、间距 `d=1`、电压差 `V0=1`，外框为 `[-6,6] × [-4,4]`，`h=0.1`，外框固定为零电势。对应配置也保存在 `configs/parallel_plate.json`。参数 `--plate-length`、`--gap`、`--domain-half-width`、`--domain-half-height` 可按需调整。外框半宽、半高、半板长和半板间距必须是 `h` 的整数倍；两板之间至少四个网格区间，极板距外框至少两个区间。外框是开放空间的截断近似，当前数值尚未通过域大小或网格敏感性检查。
+
+平行板 `solution.npz` 目前包含 `x`、`y`、`potential`、`fixed_mask`、`positive_plate_mask` 和 `negative_plate_mask`，不含电场或解析误差；`summary.json` 保存原配置、实际端点、网格、收敛信息和自由节点残差。`V0=0` 允许用于零解检查，目前没有归一化指标。使用不同算例时默认输出目录也不同。
+
+所有二维数组按 `(y, x)` 排列，`x` 和 `y` 是一维坐标。矩形 NPZ 包含 `x`、`y`、`potential`、`analytic_potential`、`absolute_error`、`electric_field_x`、`electric_field_y`，可以用 `numpy.load(..., allow_pickle=False)` 读取。长度与电压采用一致单位；若输入为米和伏特，电场为伏特/米。矩形误差指标只统计内部节点，离散残差为内部自由节点上 \(|\nabla_h^2\varphi|\) 的最大值。
 
 命令退出码：`0` 表示达到停止阈值；`1` 表示达到最大迭代次数，此时仍保存未收敛结果和诊断；`2` 表示配置或文件读写失败。不同算例应使用不同输出目录，同名文件会被覆盖。
 

@@ -1,4 +1,4 @@
-"""Run the rectangle_sine case and save its numerical result files."""
+"""Run a configured case and save its numerical result files."""
 
 from __future__ import annotations
 
@@ -10,18 +10,20 @@ from pathlib import Path
 import numpy as np
 
 from electrostatic_bvp.config import ConfigError, load_config
-from electrostatic_bvp.solver import RectangleResult, solve_rectangle_sine
+from electrostatic_bvp.solver import (
+    ParallelPlateResult, RectangleResult, solve_parallel_plate, solve_rectangle_sine,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Solve the rectangle_sine case and save numerical results."
+        description="Solve a configured case and save numerical results."
     )
     parser.add_argument(
         "--config", type=Path, default=Path("configs/rectangle.json")
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("results/rectangle")
+        "--output-dir", type=Path, help="defaults to results/rectangle or results/parallel_plate"
     )
     return parser.parse_args()
 
@@ -91,19 +93,90 @@ def save_results(
     return solution_path, summary_path
 
 
+def save_parallel_plate_results(
+    config: dict, result: ParallelPlateResult, output_dir: str | Path,
+) -> tuple[Path, Path]:
+    """Save the S2 potential and constraints, without claiming field output."""
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    solution_path = destination / "solution.npz"
+    summary_path = destination / "summary.json"
+    np.savez_compressed(
+        solution_path, x=result.x, y=result.y, potential=result.potential,
+        fixed_mask=result.fixed_mask, positive_plate_mask=result.positive_plate_mask,
+        negative_plate_mask=result.negative_plate_mask,
+    )
+    positive_y, positive_x = np.where(result.positive_plate_mask)
+    negative_y, negative_x = np.where(result.negative_plate_mask)
+
+    def endpoints(ys: np.ndarray, xs: np.ndarray) -> list[list[float]]:
+        return [[float(result.x[xs[0]]), float(result.y[ys[0]])],
+                [float(result.x[xs[-1]]), float(result.y[ys[-1]])]]
+
+    summary = {
+        "case": config["case"],
+        "model": "2D Laplace equation; zero-thickness fixed-potential plates; zero-potential outer frame",
+        "units": "Use consistent length and voltage units; potential uses the input voltage unit.",
+        "config": config,
+        "actual_geometry": {
+            "x_bounds": [float(result.x[0]), float(result.x[-1])],
+            "y_bounds": [float(result.y[0]), float(result.y[-1])],
+            "positive_plate_endpoints_xy": endpoints(positive_y, positive_x),
+            "negative_plate_endpoints_xy": endpoints(negative_y, negative_x),
+            "positive_plate_potential": float(config["boundary_conditions"]["V0"]) / 2,
+            "negative_plate_potential": -float(config["boundary_conditions"]["V0"]) / 2,
+            "outer_potential": float(config["boundary_conditions"]["outer_potential"]),
+        },
+        "grid": {
+            "nx_intervals": len(result.x) - 1,
+            "ny_intervals": len(result.y) - 1,
+            "array_shape_yx": list(result.potential.shape),
+            "dx": float(config["grid"]["h"]),
+            "dy": float(config["grid"]["h"]),
+            "fixed_node_count": int(np.count_nonzero(result.fixed_mask)),
+            "free_node_count": int(np.count_nonzero(~result.fixed_mask)),
+        },
+        "solver": {
+            "method": config["solver"]["method"],
+            "converged": result.converged,
+            "stop_reason": "tolerance_reached" if result.converged else "maximum_iterations",
+            "iterations": result.iterations,
+            "final_change": result.final_change,
+            "max_abs_laplace_residual": result.max_abs_residual,
+            "diagnostic_region": "free_grid_nodes_only",
+            "tol": config["solver"]["tol"],
+            "Nmax": config["solver"]["Nmax"],
+        },
+        "electric_field": {"available": False, "reason": "Conductor-aware field calculation is planned for S3."},
+        "outputs": {"solution_npz": solution_path.name},
+    }
+    with summary_path.open("w", encoding="utf-8") as stream:
+        json.dump(summary, stream, indent=2, ensure_ascii=False, allow_nan=False)
+        stream.write("\n")
+    return solution_path, summary_path
+
+
 def main() -> int:
     args = parse_args()
     try:
         config = load_config(args.config)
-        result = solve_rectangle_sine(config)
-        solution_path, summary_path = save_results(config, result, args.output_dir)
+        if config["case"] == "rectangle_sine":
+            result = solve_rectangle_sine(config)
+            output = args.output_dir or Path("results/rectangle")
+            solution_path, summary_path = save_results(config, result, output)
+            diagnostic = f"max_abs_error={result.max_abs_error:.6g}"
+        else:
+            result = solve_parallel_plate(config)
+            output = args.output_dir or Path("results/parallel_plate")
+            solution_path, summary_path = save_parallel_plate_results(config, result, output)
+            diagnostic = f"max_abs_laplace_residual={result.max_abs_residual:.6g}"
     except (ConfigError, OSError, ValueError) as exc:
         print(f"计算失败：{exc}", file=sys.stderr)
         return 2
 
     print(
         f"完成：converged={result.converged}, iterations={result.iterations}, "
-        f"max_abs_error={result.max_abs_error:.6g}"
+        + diagnostic
     )
     print(f"数值结果：{solution_path}")
     print(f"运行摘要：{summary_path}")

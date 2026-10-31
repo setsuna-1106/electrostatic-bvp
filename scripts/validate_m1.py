@@ -120,7 +120,8 @@ def main():
     checks["Nmax=1 is reported as nonconverged"] = not stopped.converged and stopped.iterations == 1
 
     source_paths = ["configs/rectangle.json", "pyproject.toml", "uv.lock", "scripts/validate_m1.py",
-                    "src/electrostatic_bvp/config.py", "src/electrostatic_bvp/solver.py",
+                    "src/electrostatic_bvp/config.py", "src/electrostatic_bvp/cases.py",
+                    "src/electrostatic_bvp/solver.py",
                     "src/electrostatic_bvp/main.py"]
     report = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
