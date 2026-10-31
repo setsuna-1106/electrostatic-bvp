@@ -1,0 +1,21 @@
+{
+  "case": "parallel_plate",
+  "geometry": {
+    "plate_length": 4.0,
+    "gap": 1.0,
+    "domain_half_width": 6.0,
+    "domain_half_height": 4.0
+  },
+  "boundary_conditions": {
+    "V0": 1.0,
+    "outer_potential": 0.0
+  },
+  "grid": {
+    "h": 0.1
+  },
+  "solver": {
+    "method": "jacobi",
+    "tol": 1e-9,
+    "Nmax": 100000
+  }
+}

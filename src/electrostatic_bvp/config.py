@@ -1,4 +1,4 @@
-"""Read, validate, and write the small JSON configuration used by the MVP."""
+"""Read, validate, and write case-specific JSON configurations."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 
 class ConfigError(ValueError):
-    """Raised when a configuration is malformed or outside the MVP scope."""
+    """Raised when a configuration is malformed or outside the supported scope."""
 
 
 def _object_with_keys(value: Any, name: str, keys: set[str]) -> Mapping[str, Any]:
@@ -41,36 +41,58 @@ def _finite_number(value: Any, name: str, *, positive: bool = False) -> float:
     return number
 
 
+def _aligned_intervals(length: float, h: float, name: str, minimum: int = 1) -> int:
+    intervals = length / h
+    if not math.isfinite(intervals) or not math.isclose(
+        intervals, round(intervals), rel_tol=0.0, abs_tol=1e-9
+    ) or round(intervals) < minimum:
+        raise ConfigError(f"'{name}/grid.h' must be an integer of at least {minimum}")
+    return round(intervals)
+
+
 def validate_config(config: Any) -> dict[str, Any]:
-    """Validate and return an MVP rectangle-sine configuration."""
+    """Validate either supported case, retaining the original input values."""
     root = _object_with_keys(
         config,
         "config",
         {"case", "geometry", "boundary_conditions", "grid", "solver"},
     )
 
-    if root["case"] != "rectangle_sine":
-        raise ConfigError("'case' must be 'rectangle_sine' for the current MVP")
-
-    geometry = _object_with_keys(root["geometry"], "geometry", {"Lx", "Ly"})
-    lx = _finite_number(geometry["Lx"], "geometry.Lx", positive=True)
-    ly = _finite_number(geometry["Ly"], "geometry.Ly", positive=True)
-
-    boundary = _object_with_keys(
-        root["boundary_conditions"], "boundary_conditions", {"V0"}
-    )
-    _finite_number(boundary["V0"], "boundary_conditions.V0")
+    case = root["case"]
+    if case not in ("rectangle_sine", "parallel_plate"):
+        raise ConfigError("'case' must be 'rectangle_sine' or 'parallel_plate'")
 
     grid = _object_with_keys(root["grid"], "grid", {"h"})
     h = _finite_number(grid["h"], "grid.h", positive=True)
-    for length, name in ((lx, "geometry.Lx"), (ly, "geometry.Ly")):
-        intervals = length / h
-        if not math.isfinite(intervals) or intervals < 2 or not math.isclose(
-            intervals, round(intervals), rel_tol=0.0, abs_tol=1e-9
-        ):
-            raise ConfigError(
-                f"'{name}/grid.h' must be an integer of at least 2"
-            )
+    if case == "rectangle_sine":
+        geometry = _object_with_keys(root["geometry"], "geometry", {"Lx", "Ly"})
+        for key in ("Lx", "Ly"):
+            length = _finite_number(geometry[key], f"geometry.{key}", positive=True)
+            _aligned_intervals(length, h, f"geometry.{key}", minimum=2)
+        boundary = _object_with_keys(root["boundary_conditions"], "boundary_conditions", {"V0"})
+    else:
+        geometry = _object_with_keys(
+            root["geometry"], "geometry",
+            {"plate_length", "gap", "domain_half_width", "domain_half_height"},
+        )
+        lengths = {
+            key: _finite_number(value, f"geometry.{key}", positive=True)
+            for key, value in geometry.items()
+        }
+        a = _aligned_intervals(lengths["domain_half_width"], h, "geometry.domain_half_width")
+        b = _aligned_intervals(lengths["domain_half_height"], h, "geometry.domain_half_height")
+        half_plate = _aligned_intervals(lengths["plate_length"] / 2, h, "geometry.plate_length/2")
+        half_gap = _aligned_intervals(lengths["gap"] / 2, h, "geometry.gap/2", minimum=2)
+        if a - half_plate < 2 or b - half_gap < 2:
+            raise ConfigError("plates must be at least two grid intervals inside the outer boundary")
+        boundary = _object_with_keys(
+            root["boundary_conditions"], "boundary_conditions", {"V0", "outer_potential"}
+        )
+        outer = _finite_number(boundary["outer_potential"], "boundary_conditions.outer_potential")
+        if outer != 0:
+            raise ConfigError("'boundary_conditions.outer_potential' must be zero")
+
+    _finite_number(boundary["V0"], "boundary_conditions.V0")
 
     solver = _object_with_keys(
         root["solver"], "solver", {"method", "tol", "Nmax"}
@@ -86,7 +108,7 @@ def validate_config(config: Any) -> dict[str, Any]:
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
-    """Load a JSON file and validate it against the current MVP configuration."""
+    """Load a JSON file and validate its case configuration."""
     config_path = Path(path)
     try:
         with config_path.open("r", encoding="utf-8") as stream:

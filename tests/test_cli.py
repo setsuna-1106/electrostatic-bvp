@@ -89,6 +89,19 @@ class CliTests(unittest.TestCase):
             self.assertEqual(run.returncode, 2)
             self.assertFalse(output.exists())
 
+    def test_parallel_plate_formatter_and_invalid_geometry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "plate.json"
+            run = self.run_command("scripts/format_input.py", "--case", "parallel_plate",
+                                   "--output", output)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(load_config(output), load_config(ROOT / "configs/parallel_plate.json"))
+            bad = Path(directory) / "bad.json"
+            run = self.run_command("scripts/format_input.py", "--case", "parallel_plate",
+                                   "--plate-length", "4.1", "--output", bad)
+            self.assertEqual(run.returncode, 2)
+            self.assertFalse(bad.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
