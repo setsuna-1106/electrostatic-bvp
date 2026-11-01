@@ -71,6 +71,7 @@ def solve_jacobi(
     dy: float,
     tol: float,
     nmax: int,
+    backend: str = "numpy",
 ) -> JacobiResult:
     """Solve a five-point Laplace problem with fixed outer and internal nodes.
 
@@ -98,23 +99,35 @@ def solve_jacobi(
     potential[fixed_mask] = fixed_values[fixed_mask]
     weight_x = 1.0 / (2.0 * (1.0 + (dx / dy) ** 2))
     weight_y = 0.5 - weight_x
-    converged = False
-    for iteration in range(1, nmax + 1):
-        # Every candidate is computed from the old potential, including
-        # neighbours on both outer and internal fixed nodes.
-        candidate = (
-            weight_x * potential[1:-1, :-2]
-            + weight_x * potential[1:-1, 2:]
-            + weight_y * potential[:-2, 1:-1]
-            + weight_y * potential[2:, 1:-1]
+    if backend == "numba":
+        try:
+            from electrostatic_bvp.acceleration import compiled_jacobi
+        except ImportError as exc:
+            raise ValueError("Numba backend requires the optional s4 dependency") from exc
+        potential, iteration, final_change = compiled_jacobi(
+            fixed_mask, potential, weight_x, weight_y, tol, nmax,
         )
-        updated = potential.copy()
-        updated[1:-1, 1:-1][free] = candidate[free]
-        final_change = float(np.max(np.abs(candidate[free] - potential[1:-1, 1:-1][free])))
-        potential = updated
-        if final_change <= tol:
-            converged = True
-            break
+        converged = final_change <= tol
+    elif backend == "numpy":
+        converged = False
+        for iteration in range(1, nmax + 1):
+            # Every candidate is computed from the old potential, including
+            # neighbours on both outer and internal fixed nodes.
+            candidate = (
+                weight_x * potential[1:-1, :-2]
+                + weight_x * potential[1:-1, 2:]
+                + weight_y * potential[:-2, 1:-1]
+                + weight_y * potential[2:, 1:-1]
+            )
+            updated = potential.copy()
+            updated[1:-1, 1:-1][free] = candidate[free]
+            final_change = float(np.max(np.abs(candidate[free] - potential[1:-1, 1:-1][free])))
+            potential = updated
+            if final_change <= tol:
+                converged = True
+                break
+    else:
+        raise ValueError("backend must be 'numpy' or 'numba'")
 
     residual = (
         (potential[1:-1, :-2] - 2.0 * potential[1:-1, 1:-1]
@@ -131,7 +144,7 @@ def solve_jacobi(
     )
 
 
-def solve_parallel_plate(config: dict[str, Any]) -> ParallelPlateResult:
+def solve_parallel_plate(config: dict[str, Any], *, backend: str = "numpy") -> ParallelPlateResult:
     """Solve the parallel-plate potential with fixed frame and plates."""
     config = validate_config(config)
     if config["case"] != "parallel_plate":
@@ -140,7 +153,7 @@ def solve_parallel_plate(config: dict[str, Any]) -> ParallelPlateResult:
     h = float(config["grid"]["h"])
     result = solve_jacobi(
         grid.fixed_mask, grid.fixed_values, dx=h, dy=h,
-        tol=float(config["solver"]["tol"]), nmax=config["solver"]["Nmax"],
+        tol=float(config["solver"]["tol"]), nmax=config["solver"]["Nmax"], backend=backend,
     )
     assert grid.positive_plate_mask is not None and grid.negative_plate_mask is not None
     field = parallel_plate_field(

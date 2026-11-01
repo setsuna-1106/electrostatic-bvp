@@ -14,16 +14,20 @@
 │   └── parallel_plate.json
 ├── docs/
 │   ├── CHANGELOG.md
+│   ├── M2-PLAN.md
 │   ├── ROADMAP.md
 │   └── VALIDATION.md
 ├── results/             # 本地生成的数值结果与验收报告，不纳入 Git
 ├── scripts/
 │   ├── format_input.py
-│   └── validate_m1.py
+│   ├── validate_m1.py
+│   ├── validate_m2.py
+│   └── plot_m2_grid_comparison.py
 ├── src/electrostatic_bvp/
 │   ├── config.py
 │   ├── cases.py
 │   ├── fields.py
+│   ├── acceleration.py
 │   ├── solver.py
 │   ├── visualize.py
 │   └── main.py
@@ -47,9 +51,9 @@
 
 ## 项目状态
 
-**当前版本：** v0.2.0 之后的开发版：M1 MVP 已完成；M2 的 S1 几何输入、S2 电势求解和 S3 电场绘图已完成，M2 整体验收尚未完成。
+**当前版本：** v0.2.0 之后的开发版：M1 MVP 和 M2 的 S1–S3 已完成；S4 检查已运行，但网格电场差仍超过建议尺度，M2 整体验收尚未完成。
 
-已核验矩形算例的解析误差与网格加密趋势，以及平行板的内部约束、自由节点残差、电场方向与掩码。详细方法和复现命令见[数值验收说明](docs/VALIDATION.md)。平行板的网格和计算域敏感性、参数比较及 COMSOL 对照仍按路线图推进。
+已核验矩形算例的解析误差与网格加密趋势，以及平行板的内部约束、自由节点残差、电场方向与掩码。平行板的迭代、计算域和网格比较已运行，网格电场比较尚未达到建议尺度。详细方法和结果见[数值验收说明](docs/VALIDATION.md)；参数比较及 COMSOL 对照仍按路线图推进。
 
 从项目根目录安装锁定依赖并运行默认算例：
 
@@ -85,7 +89,7 @@ PYTHONPATH=src uv run --locked python -m electrostatic_bvp.main \
   --config results/parallel-plate-config.json --output-dir results/parallel_plate
 ```
 
-默认板长 `L=4`、间距 `d=1`、电压差 `V0=1`，外框为 `[-6,6] × [-4,4]`，`h=0.1`，外框固定为零电势。对应配置也保存在 `configs/parallel_plate.json`。参数 `--plate-length`、`--gap`、`--domain-half-width`、`--domain-half-height` 可按需调整。外框半宽、半高、半板长和半板间距必须是 `h` 的整数倍；两板之间至少四个网格区间，极板距外框至少两个区间。外框是开放空间的截断近似，当前数值尚未通过域大小或网格敏感性检查。
+默认板长 `L=4`、间距 `d=1`、电压差 `V0=1`，外框为 `[-6,6] × [-4,4]`，`h=0.1`，外框固定为零电势。对应配置也保存在 `configs/parallel_plate.json`。参数 `--plate-length`、`--gap`、`--domain-half-width`、`--domain-half-height` 可按需调整。外框半宽、半高、半板长和半板间距必须是 `h` 的整数倍；两板之间至少四个网格区间，极板距外框至少两个区间。外框是开放空间的截断近似；检查显示该起步外框和网格还不能满足建议比较尺度。
 
 平行板 `solution.npz` 包含网格、电势、电场分量、固定节点与极板掩码、`field_valid_mask` 和 `analysis_valid_mask`；极板上两分量均为 NaN，读取电场时必须使用 `field_valid_mask`。自由节点的差分模板可以以极板节点为端点，但不跨越极板。`analysis_valid_mask` 进一步排除距离极板端点不超过 `0.2d` 的节点；摘要会标记该半径是否至少有两个网格区间，供后续比较参考，并不保证精度。
 
@@ -103,3 +107,13 @@ PYTHONPATH=src uv run --locked python -W error scripts/validate_m1.py
 ```
 
 数值验收生成 `results/m1-validation/report.json` 和各算例的 NPZ/JSON。验证脚本、配置、测试和说明纳入版本管理，生成的验证结果保留在本地。
+
+平行板 S4 数值可靠性检查可单独运行：
+
+```bash
+uv sync --locked --extra s4
+PYTHONPATH=src uv run --locked --extra s4 python -W error scripts/validate_m2.py \
+  --backend numba --output-dir results/m2-validation
+```
+
+该命令会运行多个网格和计算域，可能耗时较长。`--backend numba` 只编译相同的 Jacobi 步骤，不启用 fast-math；默认 `numpy` 后端无需额外依赖。每次计算单独保存数组、配置、诊断、依赖版本和源码摘要；若中断，可用相同参数加 `--resume` 续跑，配置或源码不匹配时拒绝复用。`Nmax` 默认为 200 万，收敛仍以每个算例的 `tol` 为准，未收敛或未通过比较尺度会使验收返回非零退出码。检查范围、尺度与当前结果见[数值验收说明](docs/VALIDATION.md)。

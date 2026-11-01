@@ -1,5 +1,6 @@
 """Jacobi iteration with internal Dirichlet nodes and free-node diagnostics."""
 
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,29 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FixedSolverTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("numba"), "optional s4 dependency is not installed")
+    def test_numba_backend_matches_numpy_jacobi(self):
+        fixed = np.zeros((9, 11), dtype=bool)
+        fixed[[0, -1], :] = True
+        fixed[:, [0, -1]] = True
+        fixed[3, 3:8] = True
+        fixed[5, 3:8] = True
+        values = np.zeros(fixed.shape)
+        values[3, 3:8] = 0.5
+        values[5, 3:8] = -0.5
+        for dx, dy in ((0.1, 0.1), (0.1, 0.2)):
+            for tol, nmax in ((1e-12, 1), (1e-12, 43), (1e-11, 10000)):
+                with self.subTest(dx=dx, dy=dy, tol=tol, nmax=nmax):
+                    numpy = solve_jacobi(fixed, values, dx=dx, dy=dy, tol=tol, nmax=nmax)
+                    numba = solve_jacobi(fixed, values, dx=dx, dy=dy, tol=tol, nmax=nmax,
+                                         backend="numba")
+                    self.assertEqual(numba.iterations, numpy.iterations)
+                    self.assertEqual(numba.converged, numpy.converged)
+                    np.testing.assert_allclose(numba.potential, numpy.potential, rtol=0, atol=3e-15)
+                    np.testing.assert_array_equal(numba.potential[fixed], values[fixed])
+                    self.assertAlmostEqual(numba.final_change, numpy.final_change, places=14)
+                    self.assertAlmostEqual(numba.max_abs_residual, numpy.max_abs_residual, places=12)
+
     def test_one_step_and_residual_exclude_fixed_nodes(self):
         fixed = np.zeros((5, 5), dtype=bool)
         fixed[[0, -1], :] = True
