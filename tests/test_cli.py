@@ -119,16 +119,48 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(summary["config"], config)
                 self.assertEqual(summary["solver"]["converged"], expected_code == 0)
                 self.assertEqual(summary["solver"]["diagnostic_region"], "free_grid_nodes_only")
-                self.assertFalse(summary["electric_field"]["available"])
+                self.assertTrue(summary["electric_field"]["available"])
+                self.assertEqual(set(summary["outputs"]), {"solution_npz", "potential_figure",
+                                                            "field_figure", "midline_figure"})
+                for name in ("potential_figure", "field_figure", "midline_figure"):
+                    self.assertGreater((output / summary["outputs"][name]).stat().st_size, 1000)
                 with np.load(output / "solution.npz", allow_pickle=False) as arrays:
                     self.assertEqual(set(arrays.files), {"x", "y", "potential", "fixed_mask",
-                                                        "positive_plate_mask", "negative_plate_mask"})
+                                                        "positive_plate_mask", "negative_plate_mask",
+                                                        "electric_field_x", "electric_field_y",
+                                                        "field_valid_mask", "analysis_valid_mask"})
                     u = arrays["potential"]
                     self.assertTrue(np.isfinite(u).all())
                     np.testing.assert_array_equal(u[arrays["positive_plate_mask"]], 0.5)
                     np.testing.assert_array_equal(u[arrays["negative_plate_mask"]], -0.5)
+                    plate = arrays["positive_plate_mask"] | arrays["negative_plate_mask"]
+                    np.testing.assert_array_equal(arrays["field_valid_mask"], ~plate)
+                    self.assertTrue(np.isnan(arrays["electric_field_y"][plate]).all())
+                    self.assertTrue(np.isfinite(arrays["electric_field_y"][~plate]).all())
                     self.assertEqual(summary["grid"]["free_node_count"],
                                      np.count_nonzero(~arrays["fixed_mask"]))
+
+    def test_parallel_plate_zero_voltage_outputs_strict_json_and_plots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            config = load_config(ROOT / "configs/parallel_plate.json")
+            config["geometry"] = {"plate_length": 0.4, "gap": 0.4,
+                                  "domain_half_width": 0.6, "domain_half_height": 0.6}
+            config["boundary_conditions"]["V0"] = 0
+            save_config(config, path / "plate.json")
+            run = self.run_command("-m", "electrostatic_bvp.main", "--config", path / "plate.json",
+                                   "--output-dir", path / "output")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            def reject_constant(value):
+                raise ValueError(f"Non-finite JSON constant: {value}")
+            summary = json.loads((path / "output/summary.json").read_text(), parse_constant=reject_constant)
+            metrics = summary["field_comparison"]
+            self.assertIsNone(metrics["center_negative_ey_over_reference"])
+            self.assertIsNone(metrics["central_max_vector_deviation_over_reference"])
+            self.assertIsNone(metrics["outside_negative_ey_over_reference"])
+            self.assertIn("zero", metrics["normalization_unavailable_reason"])
+            self.assertFalse(metrics["endpoint_exclusion"]["has_two_grid_intervals"])
+            self.assertTrue((path / "output/midline.png").is_file())
 
 
 if __name__ == "__main__":

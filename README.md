@@ -23,7 +23,9 @@
 ├── src/electrostatic_bvp/
 │   ├── config.py
 │   ├── cases.py
+│   ├── fields.py
 │   ├── solver.py
+│   ├── visualize.py
 │   └── main.py
 ├── tests/               # 测试与数值验证
 ├── pyproject.toml       # Python 项目配置
@@ -38,16 +40,16 @@
 - **解析对照：** 矩形正弦边界算例提供解析解，并记录内部节点的最大绝对误差和 RMSE。
 - **电场：** 由电势计算 \(\mathbf{E}=-\nabla\varphi\)，内部用二阶中心差分，边界用二阶单边差分。
 - **矩形输出：** `solution.npz` 保存网格、电势、解析解、绝对误差与电场分量；`summary.json` 保存配置、网格、收敛状态、离散 Laplace 残差及误差指标。
-- **平行板当前能力：** 有限长零厚度极板和零电势外框的电势求解；内部极板及外框节点固定，收敛变化量与残差仅统计自由节点。电场与绘图尚未实现。
-- **运行依赖：** Python 3.11 及以上、NumPy；测试使用标准库 `unittest`。
+- **平行板当前能力：** 有限长零厚度极板和零电势外框的电势、电场及图像；极板节点的电场无效，收敛变化量与残差仅统计自由节点。
+- **运行依赖：** Python 3.11 及以上、NumPy、Matplotlib；测试使用标准库 `unittest`。
 
 详细阶段见[开发路线图](docs/ROADMAP.md)。
 
 ## 项目状态
 
-**当前版本：** v0.2.0 之后的开发版：M1 MVP 已完成；M2 的 S1 几何输入和 S2 电势求解已完成，M2 整体验收尚未完成。
+**当前版本：** v0.2.0 之后的开发版：M1 MVP 已完成；M2 的 S1 几何输入、S2 电势求解和 S3 电场绘图已完成，M2 整体验收尚未完成。
 
-已核验矩形算例的固定边界、Jacobi 更新与停止条件、解析误差、电场方向和网格加密趋势，以及平行板的内部约束与自由节点残差。详细方法和复现命令见[数值验收说明](docs/VALIDATION.md)。平行板电场、绘图、计算域敏感性和 COMSOL 对照仍按路线图推进。
+已核验矩形算例的解析误差与网格加密趋势，以及平行板的内部约束、自由节点残差、电场方向与掩码。详细方法和复现命令见[数值验收说明](docs/VALIDATION.md)。平行板的网格和计算域敏感性、参数比较及 COMSOL 对照仍按路线图推进。
 
 从项目根目录安装锁定依赖并运行默认算例：
 
@@ -85,7 +87,9 @@ PYTHONPATH=src uv run --locked python -m electrostatic_bvp.main \
 
 默认板长 `L=4`、间距 `d=1`、电压差 `V0=1`，外框为 `[-6,6] × [-4,4]`，`h=0.1`，外框固定为零电势。对应配置也保存在 `configs/parallel_plate.json`。参数 `--plate-length`、`--gap`、`--domain-half-width`、`--domain-half-height` 可按需调整。外框半宽、半高、半板长和半板间距必须是 `h` 的整数倍；两板之间至少四个网格区间，极板距外框至少两个区间。外框是开放空间的截断近似，当前数值尚未通过域大小或网格敏感性检查。
 
-平行板 `solution.npz` 目前包含 `x`、`y`、`potential`、`fixed_mask`、`positive_plate_mask` 和 `negative_plate_mask`，不含电场或解析误差；`summary.json` 保存原配置、实际端点、网格、收敛信息和自由节点残差。`V0=0` 允许用于零解检查，目前没有归一化指标。使用不同算例时默认输出目录也不同。
+平行板 `solution.npz` 包含网格、电势、电场分量、固定节点与极板掩码、`field_valid_mask` 和 `analysis_valid_mask`；极板上两分量均为 NaN，读取电场时必须使用 `field_valid_mask`。自由节点的差分模板可以以极板节点为端点，但不跨越极板。`analysis_valid_mask` 进一步排除距离极板端点不超过 `0.2d` 的节点；摘要会标记该半径是否至少有两个网格区间，供后续比较参考，并不保证精度。
+
+`summary.json` 保存原配置、实际端点、收敛信息、自由节点残差及相对于 `Eref=|V0|/d` 的中心场、中央区域最大向量偏差和板外点场强。这些比较量不是有限板解析误差。`V0=0` 时归一化指标为 `null` 并注明原因；板外点若不在计算域内也记为 `null`。输出还包括 `potential.png`、`electric_field.png` 和 `midline.png`；矢量箭头统一长度、靠近极板时缩短，颜色表示场强。未收敛运行的图像会标记 `NOT CONVERGED`。使用不同算例时默认输出目录也不同。
 
 所有二维数组按 `(y, x)` 排列，`x` 和 `y` 是一维坐标。矩形 NPZ 包含 `x`、`y`、`potential`、`analytic_potential`、`absolute_error`、`electric_field_x`、`electric_field_y`，可以用 `numpy.load(..., allow_pickle=False)` 读取。长度与电压采用一致单位；若输入为米和伏特，电场为伏特/米。矩形误差指标只统计内部节点，离散残差为内部自由节点上 \(|\nabla_h^2\varphi|\) 的最大值。
 

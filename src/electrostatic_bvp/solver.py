@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 
 from electrostatic_bvp.cases import build_parallel_plate, build_rectangle_sine
 from electrostatic_bvp.config import ConfigError, validate_config
+from electrostatic_bvp.fields import PlateField, electric_field, parallel_plate_field
 
 
 FloatArray = NDArray[np.float64]
@@ -29,7 +30,7 @@ class JacobiResult:
 
 @dataclass(frozen=True)
 class ParallelPlateResult:
-    """Potential and fixed constraints; electric-field output is a later stage."""
+    """Potential, fixed constraints and masked electric field."""
 
     x: FloatArray
     y: FloatArray
@@ -37,6 +38,7 @@ class ParallelPlateResult:
     fixed_mask: BoolArray
     positive_plate_mask: BoolArray
     negative_plate_mask: BoolArray
+    field: PlateField
     converged: bool
     iterations: int
     final_change: float
@@ -141,9 +143,14 @@ def solve_parallel_plate(config: dict[str, Any]) -> ParallelPlateResult:
         tol=float(config["solver"]["tol"]), nmax=config["solver"]["Nmax"],
     )
     assert grid.positive_plate_mask is not None and grid.negative_plate_mask is not None
+    field = parallel_plate_field(
+        grid.x, grid.y, result.potential, grid.positive_plate_mask,
+        grid.negative_plate_mask, h=h,
+    )
     return ParallelPlateResult(
         x=grid.x, y=grid.y, potential=result.potential, fixed_mask=grid.fixed_mask,
         positive_plate_mask=grid.positive_plate_mask, negative_plate_mask=grid.negative_plate_mask,
+        field=field,
         converged=result.converged, iterations=result.iterations,
         final_change=result.final_change, max_abs_residual=result.max_abs_residual,
     )
@@ -170,18 +177,6 @@ def analytic_rectangle_sine(
         / np.expm1(-2.0 * np.pi * (ly / lx))
     )
     return v0 * np.outer(y_factor, x_factor)
-
-
-def electric_field(
-    potential: FloatArray, *, dx: float, dy: float
-) -> tuple[FloatArray, FloatArray]:
-    """Return (Ex, Ey) = -grad(phi) on a (y, x) grid.
-
-    Use centered second-order differences inside and second-order one-sided
-    differences at the edges. Each axis must contain at least three nodes.
-    """
-    derivative_y, derivative_x = np.gradient(potential, dy, dx, edge_order=2)
-    return -derivative_x, -derivative_y
 
 
 def solve_rectangle_sine(config: dict[str, Any]) -> RectangleResult:

@@ -121,6 +121,7 @@ def main():
 
     source_paths = ["configs/rectangle.json", "pyproject.toml", "uv.lock", "scripts/validate_m1.py",
                     "src/electrostatic_bvp/config.py", "src/electrostatic_bvp/cases.py",
+                    "src/electrostatic_bvp/fields.py",
                     "src/electrostatic_bvp/solver.py",
                     "src/electrostatic_bvp/main.py"]
     report = {

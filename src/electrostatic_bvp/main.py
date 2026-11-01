@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from electrostatic_bvp.config import ConfigError, load_config
+from electrostatic_bvp.fields import parallel_plate_metrics
 from electrostatic_bvp.solver import (
     ParallelPlateResult, RectangleResult, solve_parallel_plate, solve_rectangle_sine,
 )
@@ -96,7 +97,9 @@ def save_results(
 def save_parallel_plate_results(
     config: dict, result: ParallelPlateResult, output_dir: str | Path,
 ) -> tuple[Path, Path]:
-    """Save the S2 potential and constraints, without claiming field output."""
+    """Save plate potential, masked fields, figures, and descriptive metrics."""
+    from electrostatic_bvp.visualize import save_parallel_plate_figures
+
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     solution_path = destination / "solution.npz"
@@ -105,6 +108,10 @@ def save_parallel_plate_results(
         solution_path, x=result.x, y=result.y, potential=result.potential,
         fixed_mask=result.fixed_mask, positive_plate_mask=result.positive_plate_mask,
         negative_plate_mask=result.negative_plate_mask,
+        electric_field_x=result.field.electric_field_x,
+        electric_field_y=result.field.electric_field_y,
+        field_valid_mask=result.field.field_valid_mask,
+        analysis_valid_mask=result.field.analysis_valid_mask,
     )
     positive_y, positive_x = np.where(result.positive_plate_mask)
     negative_y, negative_x = np.where(result.negative_plate_mask)
@@ -113,6 +120,12 @@ def save_parallel_plate_results(
         return [[float(result.x[xs[0]]), float(result.y[ys[0]])],
                 [float(result.x[xs[-1]]), float(result.y[ys[-1]])]]
 
+    metrics = parallel_plate_metrics(
+        result.x, result.y, result.field, result.positive_plate_mask,
+        result.negative_plate_mask, v0=float(config["boundary_conditions"]["V0"]),
+        h=float(config["grid"]["h"]),
+    )
+    figures = save_parallel_plate_figures(result, config, destination)
     summary = {
         "case": config["case"],
         "model": "2D Laplace equation; zero-thickness fixed-potential plates; zero-potential outer frame",
@@ -147,8 +160,19 @@ def save_parallel_plate_results(
             "tol": config["solver"]["tol"],
             "Nmax": config["solver"]["Nmax"],
         },
-        "electric_field": {"available": False, "reason": "Conductor-aware field calculation is planned for S3."},
-        "outputs": {"solution_npz": solution_path.name},
+        "electric_field": {
+            "available": True,
+            "definition": "E = -grad(potential); centered inside, second-order one-sided at outer edges",
+            "validity": "plate nodes are invalid (NaN); field_valid_mask identifies bulk values",
+            "analysis_mask": "analysis_valid_mask also excludes fixed physical-radius disks around plate endpoints",
+            "stencil": "free-node stencils may end on but do not cross a plate",
+            "figure_arrows": "length normalized and shortened near conductors; color shows field magnitude",
+            "valid_node_count": int(np.count_nonzero(result.field.field_valid_mask)),
+            "analysis_valid_node_count": int(np.count_nonzero(result.field.analysis_valid_mask)),
+        },
+        "field_comparison": metrics,
+        "interpretation": "Descriptive comparisons to an ideal uniform field; not analytic errors or validation of open-space accuracy.",
+        "outputs": {"solution_npz": solution_path.name, **figures},
     }
     with summary_path.open("w", encoding="utf-8") as stream:
         json.dump(summary, stream, indent=2, ensure_ascii=False, allow_nan=False)
