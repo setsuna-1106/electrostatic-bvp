@@ -10,10 +10,11 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 import numpy as np
 
+from electrostatic_bvp.open_plate import OpenPlateResult
 from electrostatic_bvp.solver import ParallelPlateResult
 
 
-def _plates_and_frame(ax, result: ParallelPlateResult) -> tuple[float, float, float, float]:
+def _plates_and_frame(ax, result: ParallelPlateResult | OpenPlateResult) -> tuple[float, float, float, float]:
     x, y = result.x, result.y
     pos_y, pos_x = np.where(result.positive_plate_mask)
     neg_y, _ = np.where(result.negative_plate_mask)
@@ -23,14 +24,17 @@ def _plates_and_frame(ax, result: ParallelPlateResult) -> tuple[float, float, fl
         # A light underlay keeps the real plate visible on both colormaps.
         ax.plot([left, right], [plate_y, plate_y], color="white", lw=4.5, zorder=8)
         ax.plot([left, right], [plate_y, plate_y], color="#151515", lw=2.4, zorder=9)
-    ax.plot([x[0], x[-1], x[-1], x[0], x[0]],
-            [y[0], y[0], y[-1], y[-1], y[0]], color="#151515", lw=1, zorder=7)
+    if isinstance(result, ParallelPlateResult):
+        ax.plot([x[0], x[-1], x[-1], x[0], x[0]],
+                [y[0], y[0], y[-1], y[-1], y[0]], color="#151515", lw=1, zorder=7)
     ax.set(xlim=(x[0], x[-1]), ylim=(y[0], y[-1]), xlabel="x (length units)", ylabel="y (length units)")
     ax.set_aspect("equal", adjustable="box")
     return left, right, lower, upper
 
 
-def _status(result: ParallelPlateResult) -> str:
+def _status(result: ParallelPlateResult | OpenPlateResult) -> str:
+    if isinstance(result, OpenPlateResult):
+        return " — Open space"
     return "" if result.converged else " — NOT CONVERGED"
 
 
@@ -53,7 +57,9 @@ def _arrow_lengths(x, y, ux, uy, length, left, right, plate_ys, h):
     return lengths
 
 
-def save_parallel_plate_figures(result: ParallelPlateResult, config: dict, output_dir: str | Path) -> dict[str, str]:
+def save_parallel_plate_figures(
+    result: ParallelPlateResult | OpenPlateResult, config: dict, output_dir: str | Path,
+) -> dict[str, str]:
     """Save potential, masked field, and dimensionless midline figures."""
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)

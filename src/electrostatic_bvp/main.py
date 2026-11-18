@@ -11,6 +11,7 @@ import numpy as np
 
 from electrostatic_bvp.config import ConfigError, load_config
 from electrostatic_bvp.fields import parallel_plate_metrics
+from electrostatic_bvp.open_plate import FIT_TOLERANCE, OpenPlateResult, solve_open_plate
 from electrostatic_bvp.solver import (
     ParallelPlateResult, RectangleResult, solve_parallel_plate, solve_rectangle_sine,
 )
@@ -24,8 +25,10 @@ def parse_args() -> argparse.Namespace:
         "--config", type=Path, default=Path("configs/rectangle.json")
     )
     parser.add_argument(
-        "--output-dir", type=Path, help="defaults to results/rectangle or results/parallel_plate"
+        "--output-dir", type=Path, help="otherwise use the case's default results directory"
     )
+    parser.add_argument("--open-space", action="store_true",
+                        help="solve parallel plates in open space using a boundary integral")
     return parser.parse_args()
 
 
@@ -95,7 +98,7 @@ def save_results(
 
 
 def save_parallel_plate_results(
-    config: dict, result: ParallelPlateResult, output_dir: str | Path,
+    config: dict, result: ParallelPlateResult | OpenPlateResult, output_dir: str | Path,
 ) -> tuple[Path, Path]:
     """Save plate potential, masked fields, figures, and descriptive metrics."""
     from electrostatic_bvp.visualize import save_parallel_plate_figures
@@ -125,6 +128,31 @@ def save_parallel_plate_results(
         result.negative_plate_mask, v0=float(config["boundary_conditions"]["V0"]),
         h=float(config["grid"]["h"]),
     )
+    open_space = isinstance(result, OpenPlateResult)
+    if open_space:
+        model = result.model
+        solver_summary = {
+            "method": "boundary_integral",
+            "converged": result.converged,
+            "stop_reason": "charge_series_stabilized",
+            "cosine_modes": len(model.coefficients),
+            "plate_potential_check_unit_voltage": model.boundary_error_over_voltage,
+            "successive_relative_coefficient_change": model.relative_coefficient_change,
+            "check_threshold": FIT_TOLERANCE,
+            "ignored_config_fields": ["solver", "boundary_conditions.outer_potential"],
+        }
+    else:
+        solver_summary = {
+            "method": config["solver"]["method"],
+            "converged": result.converged,
+            "stop_reason": "tolerance_reached" if result.converged else "maximum_iterations",
+            "iterations": result.iterations,
+            "final_change": result.final_change,
+            "max_abs_laplace_residual": result.max_abs_residual,
+            "diagnostic_region": "free_grid_nodes_only",
+            "tol": config["solver"]["tol"],
+            "Nmax": config["solver"]["Nmax"],
+        }
     figures = save_parallel_plate_figures(result, config, destination)
     summary = {
         "case": config["case"],
@@ -149,17 +177,7 @@ def save_parallel_plate_results(
             "fixed_node_count": int(np.count_nonzero(result.fixed_mask)),
             "free_node_count": int(np.count_nonzero(~result.fixed_mask)),
         },
-        "solver": {
-            "method": config["solver"]["method"],
-            "converged": result.converged,
-            "stop_reason": "tolerance_reached" if result.converged else "maximum_iterations",
-            "iterations": result.iterations,
-            "final_change": result.final_change,
-            "max_abs_laplace_residual": result.max_abs_residual,
-            "diagnostic_region": "free_grid_nodes_only",
-            "tol": config["solver"]["tol"],
-            "Nmax": config["solver"]["Nmax"],
-        },
+        "solver": solver_summary,
         "electric_field": {
             "available": True,
             "definition": "E = -grad(potential); centered inside, second-order one-sided at outer edges",
@@ -174,6 +192,20 @@ def save_parallel_plate_results(
         "interpretation": "Descriptive comparisons to an ideal uniform field; not analytic errors or validation of open-space accuracy.",
         "outputs": {"solution_npz": solution_path.name, **figures},
     }
+    if open_space:
+        summary["model"] = "2D Laplace equation in free space; zero-thickness fixed-potential plates"
+        summary["actual_geometry"].update(
+            outer_potential=None,
+            rectangle_role="output window only",
+        )
+        summary["electric_field"].update(
+            definition="E = -grad(potential); differentiated boundary integral",
+            stencil=None,
+        )
+        summary["interpretation"] = (
+            "Descriptive comparisons to an ideal uniform field. Boundary and charge checks "
+            "measure numerical stability and are not global error bounds."
+        )
     with summary_path.open("w", encoding="utf-8") as stream:
         json.dump(summary, stream, indent=2, ensure_ascii=False, allow_nan=False)
         stream.write("\n")
@@ -185,10 +217,17 @@ def main() -> int:
     try:
         config = load_config(args.config)
         if config["case"] == "rectangle_sine":
+            if args.open_space:
+                raise ConfigError("--open-space requires the parallel_plate case")
             result = solve_rectangle_sine(config)
             output = args.output_dir or Path("results/rectangle")
             solution_path, summary_path = save_results(config, result, output)
             diagnostic = f"max_abs_error={result.max_abs_error:.6g}"
+        elif args.open_space:
+            result = solve_open_plate(config)
+            output = args.output_dir or Path("results/parallel_plate_open")
+            solution_path, summary_path = save_parallel_plate_results(config, result, output)
+            diagnostic = f"plate_potential_check={result.model.boundary_error_over_voltage:.6g}"
         else:
             result = solve_parallel_plate(config)
             output = args.output_dir or Path("results/parallel_plate")
@@ -198,10 +237,9 @@ def main() -> int:
         print(f"计算失败：{exc}", file=sys.stderr)
         return 2
 
-    print(
-        f"完成：converged={result.converged}, iterations={result.iterations}, "
-        + diagnostic
-    )
+    work = (f"cosine_modes={len(result.model.coefficients)}" if isinstance(result, OpenPlateResult)
+            else f"iterations={result.iterations}")
+    print(f"完成：converged={result.converged}, {work}, {diagnostic}")
     print(f"数值结果：{solution_path}")
     print(f"运行摘要：{summary_path}")
     return 0 if result.converged else 1

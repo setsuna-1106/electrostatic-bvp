@@ -162,6 +162,24 @@ class CliTests(unittest.TestCase):
             self.assertFalse(metrics["endpoint_exclusion"]["has_two_grid_intervals"])
             self.assertTrue((path / "output/midline.png").is_file())
 
+    def test_open_space_cli_treats_edges_as_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            run = self.run_command(
+                "-m", "electrostatic_bvp.main", "--config", ROOT / "configs/parallel_plate.json",
+                "--open-space", "--output-dir", output,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr)
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertEqual(summary["solver"]["method"], "boundary_integral")
+            self.assertIsNone(summary["actual_geometry"]["outer_potential"])
+            self.assertNotIn("max_abs_laplace_residual", summary["solver"])
+            with np.load(output / "solution.npz", allow_pickle=False) as arrays:
+                u, fixed = arrays["potential"], arrays["fixed_mask"]
+                self.assertGreater(float(np.max(np.abs(u[-1]))), 0.01)
+                self.assertFalse(np.any(fixed[-1]))
+                np.testing.assert_array_equal(fixed, arrays["positive_plate_mask"] | arrays["negative_plate_mask"])
+
 
 if __name__ == "__main__":
     unittest.main()

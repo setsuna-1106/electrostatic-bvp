@@ -55,9 +55,9 @@
 
 ## 项目状态
 
-**当前版本：** v0.2.0 之后的开发版：M1 MVP 和 M2 的有限长平行板计算与数值验收已完成。
+**当前版本**为 v0.2.0 之后的开发版，M1 MVP、M2 和 M3 已完成。
 
-五组平行板几何在进一步加密后，两次相邻网格比较、连续两次粗网格扩域比较和最细网格扩域复查均达到原定建议尺度。结果仍对应有限零电势外框，比较尺度不是开放空间总误差的严格上界。详细方法、历史未通过结果和最终记录见[数值验收说明](docs/VALIDATION.md)；COMSOL 对照仍按路线图推进。
+[M3 数值可靠性汇总](docs/VALIDATION.md#m3-数值可靠性汇总)记录矩形解析误差、网格与停止阈值敏感性，以及五组平行板的细网格和扩域比较。平行板比较尺度仅约束指定接地外框模型在目标区公共节点上的电势和场差。汇总附有复现命令和本地数据位置。
 
 从项目根目录安装锁定依赖并运行默认算例：
 
@@ -98,6 +98,15 @@ PYTHONPATH=src uv run --locked python -m electrostatic_bvp.main \
 平行板 `solution.npz` 包含网格、电势、电场分量、固定节点与极板掩码、`field_valid_mask` 和 `analysis_valid_mask`；极板上两分量均为 NaN，读取电场时必须使用 `field_valid_mask`。自由节点的差分模板可以以极板节点为端点，但不跨越极板。`analysis_valid_mask` 进一步排除距离极板端点不超过 `0.2d` 的节点；摘要会标记该半径是否至少有两个网格区间，供后续比较参考，并不保证精度。
 
 `summary.json` 保存原配置、实际端点、收敛信息、自由节点残差及相对于 `Eref=|V0|/d` 的中心场、中央区域最大向量偏差和板外点场强。这些比较量不是有限板解析误差。`V0=0` 时归一化指标为 `null` 并注明原因；板外点若不在计算域内也记为 `null`。输出还包括 `potential.png`、`electric_field.png` 和 `midline.png`；矢量箭头统一长度、靠近极板时缩短，颜色表示场强。未收敛运行的图像会标记 `NOT CONVERGED`。使用不同算例时默认输出目录也不同。
+
+如果要算**没有接地外框**的二维有限长平行板，使用同一配置加 `--open-space`：
+
+```bash
+PYTHONPATH=src uv run --locked python -m electrostatic_bvp.main \
+  --config configs/parallel_plate.json --open-space
+```
+
+结果默认写到 `results/parallel_plate_open/`。该模式在极板上求解电荷分布，再直接求电势和电场。矩形范围与 `h` 只控制输出采样；`solver` 和 `outer_potential` 是接地外框模式的配置，不参与开放空间求解。`fixed_mask` 只包含极板，摘要用极板电势检查与相邻电荷展开差汇报数值稳定性。导体上的电场仍为 NaN，尖端附近的场很大，不宜把图上采到的最大值当作收敛量。两种模型的定量对照见[平行板误差分析](docs/PARALLEL-PLATE-ERRORS.md)。
 
 所有二维数组按 `(y, x)` 排列，`x` 和 `y` 是一维坐标。矩形 NPZ 包含 `x`、`y`、`potential`、`analytic_potential`、`absolute_error`、`electric_field_x`、`electric_field_y`，可以用 `numpy.load(..., allow_pickle=False)` 读取。长度与电压采用一致单位；若输入为米和伏特，电场为伏特/米。矩形误差指标只统计内部节点，离散残差为内部自由节点上 \(|\nabla_h^2\varphi|\) 的最大值。
 
